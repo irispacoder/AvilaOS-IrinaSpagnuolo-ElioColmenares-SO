@@ -12,6 +12,7 @@
 
 # Package Files #
 *.jar
+!/AvilaOS/lib/gson-2.13.2.jar
 *.war
 *.nar
 *.ear

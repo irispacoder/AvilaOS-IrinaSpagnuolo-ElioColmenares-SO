@@ -13,11 +13,11 @@ import java.util.concurrent.CountDownLatch;
  */
 public class RelojGlobal implements Runnable{
     private final ListaEnlazada<Computador> computadores;
-    private int cicloActual;
-    private int duracionCicloMs;
+    private volatile int cicloActual;
+    private volatile int duracionCicloMs;
     private volatile boolean enEjecucion;
     private volatile boolean pausado;
-    private Thread hiloReloj;
+    private volatile Thread hiloReloj;
     private IClockListener suscriptorClusterManager;
 
     public RelojGlobal(int duracionCicloMs) {
@@ -66,35 +66,28 @@ public class RelojGlobal implements Runnable{
 
     @Override
     public void run() {
-        while (enEjecucion) {
+        Thread actual = Thread.currentThread();
+        while (enEjecucion && hiloReloj == actual) {
             try {
                 Thread.sleep(duracionCicloMs);
-                if (!pausado) {
-                    cicloActual++;
-                    ejecutarCicloParalelo();
+                if (enEjecucion && hiloReloj == actual && !pausado) {
+                    ejecutarCicloParalelo(++cicloActual);
                 }
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                enEjecucion = false;
+                actual.interrupt();
+                break;
             }
         }
     }
 
-    private void ejecutarCicloParalelo() {
+    private void ejecutarCicloParalelo(int ciclo) throws InterruptedException {
         int numComputadores = computadores.getTamano();
-        if (numComputadores == 0) return;
-
         CountDownLatch latch = new CountDownLatch(numComputadores);
-        computadores.paraCadaElemento(comp -> comp.dispararCicloParalelo(cicloActual, latch));
+        computadores.paraCadaElemento(comp -> comp.dispararCicloParalelo(ciclo, latch));
+        latch.await();
 
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
-        if (suscriptorClusterManager != null) {
-            suscriptorClusterManager.onClockTick(cicloActual);
+        if (enEjecucion && hiloReloj == Thread.currentThread() && suscriptorClusterManager != null) {
+            suscriptorClusterManager.onClockTick(ciclo);
         }
     }
 

@@ -18,9 +18,10 @@ public class ClusterManager implements IClockListener{
     private final ListaEnlazada<Buffer> buffers;
     private final ListaEnlazada<String> logEventosGlobal;
     private int latenciaRedCiclos;
+    private volatile Disco discoLocal;
     
     private static final int MAX_LOGS_MEMORIA = 1000;
-    private int contadorTotalLogsGenerados;
+    private volatile int contadorTotalLogsGenerados;
 
     public ClusterManager(int duracionCicloMs, int latenciaRedCiclos) {
         this.relojGlobal = new RelojGlobal(duracionCicloMs);
@@ -87,8 +88,16 @@ public class ClusterManager implements IClockListener{
     }
     }
 
+    public void conectarDisco(Disco disco) {
+        discoLocal = disco;
+    }
+
     @Override
-    public synchronized void onClockTick(int cicloActual) {
+    public void onClockTick(int cicloActual) {
+        Disco disco = discoLocal;
+        if (disco != null) {
+            disco.onClockTick(cicloActual);
+        }
     }
 
     private Computador seleccionarComputadorMenosCargado() {
