@@ -59,15 +59,27 @@ public class PanelComputadorView extends JPanel{
         pnlPolitica.add(new JLabel("Pol:"));
         cbPolitica = new JComboBox<>(PoliticaPlanificacion.values());
         cbPolitica.setSelectedItem(computador.getPoliticaActual());
+        spQuantum = new JSpinner(new SpinnerNumberModel(computador.getQuantumConfigurado(), 0, null, 1));
         cbPolitica.addActionListener(e -> {
             PoliticaPlanificacion sel = (PoliticaPlanificacion) cbPolitica.getSelectedItem();
-            if (sel != null) computador.setPoliticaPlanificacion(sel);
+            if (sel == PoliticaPlanificacion.ROUND_ROBIN && (Integer) spQuantum.getValue() == 0) {
+                spQuantum.setValue(1);
+            }
+            if (sel != null) {
+                computador.setPoliticaPlanificacion(sel);
+            }
         });
         pnlPolitica.add(cbPolitica);
 
         pnlPolitica.add(new JLabel("Q:"));
-        spQuantum = new JSpinner(new SpinnerNumberModel(computador.getQuantumConfigurado(), 1, 100, 1));
-        spQuantum.addChangeListener(e -> computador.setQuantumConfigurado((Integer) spQuantum.getValue()));
+        spQuantum.addChangeListener(e -> {
+            int quantum = (Integer) spQuantum.getValue();
+            if (quantum == 0 && computador.getPoliticaActual() == PoliticaPlanificacion.ROUND_ROBIN) {
+                spQuantum.setValue(1);
+            } else {
+                computador.setQuantumConfigurado(quantum);
+            }
+        });
         pnlPolitica.add(spQuantum);
 
         pnlHeader.add(lblCpuEstado);
@@ -150,17 +162,13 @@ public class PanelComputadorView extends JPanel{
 
     private void actualizarModeloLista(DefaultListModel<String> model, avilaos.estructuras.ListaEnlazada<Proceso> lista) {
         model.clear();
-        for (int i = 0; i < lista.getTamano(); i++) {
-            Proceso p = lista.obtener(i);
-            model.addElement("[" + p.getId() + "] " + p.getNombre() + " (Dead:" + p.getDeadline() + ")");
-        }
+        lista.paraCadaElemento(p ->
+                model.addElement("[" + p.getId() + "] " + p.getNombre() + " (Dead:" + p.getDeadline() + ")"));
     }
 
     private void actualizarModeloListaBloqueados(DefaultListModel<String> model, avilaos.estructuras.ListaEnlazada<Proceso> lista) {
         model.clear();
-        for (int i = 0; i < lista.getTamano(); i++) {
-            Proceso p = lista.obtener(i);
-            model.addElement("[" + p.getId() + "] " + p.getNombre() + " -> " + p.getMotivoBloqueo());
-        }
+        lista.paraCadaElemento(p ->
+                model.addElement("[" + p.getId() + "] " + p.getNombre() + " -> " + p.getMotivoBloqueo()));
     }
 }

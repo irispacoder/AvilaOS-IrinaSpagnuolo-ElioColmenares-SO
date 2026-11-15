@@ -1,291 +1,241 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package gui;
-import enums.PoliticaPlanificacion;
-import enums.TipoProceso;
-import modelo.Proceso;
-import persistencia.ConfigManager;
-import sistema.Buffer;
-import sistema.ClusterManager;
-import sistema.Computador;
 
+import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.IOException;
+import java.nio.file.Path;
 import javax.swing.*;
-import java.awt.*;
-import java.io.File;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import persistencia.CargadorJSON;
+import persistencia.CargadorJSON.ArchivoDisco;
+import persistencia.CargadorJSON.ArchivoProcesos;
+import sistema.ClusterManager;
+import sistema.SesionProyecto2;
 
-/**
- *
- * @author ispam
- */
 public class VentanaPrincipal extends JFrame {
-    
-    private final ClusterManager clusterManager;
+    private final JButton cargarDisco = new JButton("Cargar disco JSON");
+    private final JButton cargarProcesos = new JButton("Cargar procesos JSON");
+    private final JButton guardarDisco = new JButton("Guardar disco JSON");
+    private final JButton iniciar = new JButton("Iniciar / Reanudar");
+    private final JButton pausar = new JButton("Pausar");
+    private final JButton detener = new JButton("Detener");
+    private final JLabel estado = new JLabel();
+    private final JTextArea log = new JTextArea();
+    private final JTabbedPane vistas = new JTabbedPane();
+    private final Timer refresco;
 
-    private final JLabel lblCicloReloj;
-    private final JTextArea txtLogGlobal;
-    private final JPanel pnlComputadores;
-    private final JPanel pnlBuffers;
-    private final PanelGraficoMetricas panelGrafico;
-
-    private final avilaos.estructuras.ListaEnlazada<PanelComputadorView> panelesComputadores;
-    private final Timer timerRefrescoGUI;
-    private int ultimoIndiceLogLeido = 0;
+    private ArchivoDisco archivoDisco;
+    private ArchivoProcesos archivoProcesos;
+    private String nombreDisco = "pendiente";
+    private String nombreProcesos = "pendiente";
+    private SesionProyecto2 sesion;
+    private boolean reconstruirAlIniciar;
+    private PanelComputadorView computador;
+    private PanelGraficoMetricas graficoCPU;
+    private PanelDisco disco;
+    private int ultimoLog;
 
     public VentanaPrincipal() {
-        super("Simulador de Sistema Operativo Distribuido - ÁvilaOS");
-        this.clusterManager = new ClusterManager(1000, 2);
-        this.panelesComputadores = new avilaos.estructuras.ListaEnlazada<>();
-
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1280, 800);
+        super("ÁvilaOS · Proyecto 2");
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setMinimumSize(new Dimension(820, 580));
+        setSize(1150, 760);
         setLocationRelativeTo(null);
-        setLayout(new BorderLayout());
 
-        JToolBar toolBar = new JToolBar();
-        toolBar.setFloatable(false);
+        JToolBar acciones = new JToolBar();
+        acciones.setFloatable(false);
+        acciones.add(cargarDisco);
+        acciones.add(cargarProcesos);
+        acciones.add(guardarDisco);
+        acciones.addSeparator();
+        acciones.add(iniciar);
+        acciones.add(pausar);
+        acciones.add(detener);
+        add(acciones, BorderLayout.NORTH);
+        add(vistas, BorderLayout.CENTER);
+        estado.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
+        add(estado, BorderLayout.SOUTH);
+        log.setEditable(false);
 
-        JButton btnIniciar = new JButton("▶ Iniciar / Reanudar");
-        JButton btnPausar = new JButton("⏸ Pausar");
-        JButton btnDetener = new JButton("⏹ Detener");
-
-        lblCicloReloj = new JLabel("  Ciclo Reloj Global: 0  ");
-        lblCicloReloj.setFont(new Font("SansSerif", Font.BOLD, 14));
-
-        JSpinner spDuracionCiclo = new JSpinner(new SpinnerNumberModel(1000, 50, 5000, 100));
-        spDuracionCiclo.addChangeListener(e -> clusterManager.getRelojGlobal().setDuracionCicloMs((Integer) spDuracionCiclo.getValue()));
-
-        JButton btnAgregarComp = new JButton("+ Computador");
-        JButton btnAgregarBuffer = new JButton("+ Buffer");
-        JButton btnAgregarProceso = new JButton("+ Proceso (Vista 1)");
-        JButton btnGuardar = new JButton("💾 Guardar CSV");
-        JButton btnCargar = new JButton("📁 Cargar CSV");
-
-        toolBar.add(btnIniciar);
-        toolBar.add(btnPausar);
-        toolBar.add(btnDetener);
-        toolBar.addSeparator();
-        toolBar.add(lblCicloReloj);
-        toolBar.add(new JLabel(" Duración Ciclo (ms):"));
-        toolBar.add(spDuracionCiclo);
-        toolBar.addSeparator();
-        toolBar.add(btnAgregarComp);
-        toolBar.add(btnAgregarBuffer);
-        toolBar.add(btnAgregarProceso);
-        toolBar.addSeparator();
-        toolBar.add(btnGuardar);
-        toolBar.add(btnCargar);
-
-        add(toolBar, BorderLayout.NORTH);
-
-        pnlComputadores = new JPanel(new GridLayout(1, 0, 10, 10));
-        JScrollPane scrollComputadores = new JScrollPane(pnlComputadores);
-
-        pnlBuffers = new JPanel();
-        pnlBuffers.setLayout(new BoxLayout(pnlBuffers, BoxLayout.Y_AXIS));
-        pnlBuffers.setBorder(BorderFactory.createTitledBorder("Buffers Compartidos & Semáforos"));
-        JScrollPane scrollBuffers = new JScrollPane(pnlBuffers);
-        scrollBuffers.setPreferredSize(new Dimension(300, 0));
-
-        JSplitPane splitCentral = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, scrollComputadores, scrollBuffers);
-        splitCentral.setResizeWeight(0.75);
-
-        JTabbedPane tabbedBottom = new JTabbedPane();
-
-        txtLogGlobal = new JTextArea(8, 0);
-        txtLogGlobal.setEditable(false);
-        txtLogGlobal.setFont(new Font("Monospaced", Font.PLAIN, 11));
-        JScrollPane scrollLog = new JScrollPane(txtLogGlobal);
-        tabbedBottom.addTab("Log Global de Eventos", scrollLog);
-
-        panelGrafico = new PanelGraficoMetricas(clusterManager);
-        tabbedBottom.addTab("📈 Utilización de CPU vs. Tiempo", panelGrafico);
-
-        JSplitPane splitPrincipal = new JSplitPane(JSplitPane.VERTICAL_SPLIT, splitCentral, tabbedBottom);
-        splitPrincipal.setResizeWeight(0.65);
-
-        add(splitPrincipal, BorderLayout.CENTER);
-
-        btnIniciar.addActionListener(e -> clusterManager.iniciarSimulacion());
-        btnPausar.addActionListener(e -> clusterManager.pausarSimulacion());
-        btnDetener.addActionListener(e -> {
-            clusterManager.detenerSimulacion();
-            refrescarGUI();
+        cargarDisco.addActionListener(e -> cargarJSON(true));
+        cargarProcesos.addActionListener(e -> cargarJSON(false));
+        guardarDisco.addActionListener(e -> guardarJSON());
+        iniciar.addActionListener(e -> iniciarSesion());
+        pausar.addActionListener(e -> {
+            sesion.getCluster().pausarSimulacion();
+            actualizarControles();
         });
-
-        btnAgregarComp.addActionListener(e -> mostrarDialogoCrearComputador());
-        btnAgregarBuffer.addActionListener(e -> mostrarDialogoCrearBuffer());
-        btnAgregarProceso.addActionListener(e -> mostrarDialogoCrearProceso());
-
-        btnGuardar.addActionListener(e -> {
-            JFileChooser fc = new JFileChooser();
-            if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-                try {
-                    ConfigManager.guardarConfiguracionCSV(clusterManager, fc.getSelectedFile());
-                    JOptionPane.showMessageDialog(this, "Configuración guardada exitosamente.");
-                } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(this, "Error al guardar: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        detener.addActionListener(e -> detenerSesion());
+        refresco = new Timer(100, e -> refrescarGUI());
+        refresco.start();
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                refresco.stop();
+                if (sesion != null) {
+                    sesion.getCluster().detenerSimulacion();
                 }
             }
         });
-
-        btnCargar.addActionListener(e -> {
-            JFileChooser fc = new JFileChooser();
-            if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-                try {
-                    ConfigManager.cargarConfiguracionCSV(clusterManager, fc.getSelectedFile());
-                    reconstruirPanelesComputadores();
-                    refrescarGUI();
-                    JOptionPane.showMessageDialog(this, "Configuración cargada exitosamente.");
-                } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(this, "Error al cargar: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-                }
-            }
-        });
-
-        clusterManager.crearComputador("Comp-1", 1024, PoliticaPlanificacion.ROUND_ROBIN, 3);
-        clusterManager.crearComputador("Comp-2", 1024, PoliticaPlanificacion.EDF, 3);
-        clusterManager.crearBuffer("B1", 5, 1);
-        reconstruirPanelesComputadores();
-
-        timerRefrescoGUI = new Timer(100, e -> refrescarGUI());
-        timerRefrescoGUI.start();
+        mostrarCargaPendiente("Carga el sistema de archivos y los procesos para preparar la simulación.");
     }
 
-    private void reconstruirPanelesComputadores() {
-        pnlComputadores.removeAll();
-        panelesComputadores.vaciar();
+    private void cargarJSON(boolean paraDisco) {
+        JFileChooser selector = selectorJSON();
+        if (selector.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path ruta = selector.getSelectedFile().toPath();
+        try {
+            aplicarArchivoJSON(ruta, paraDisco);
+        } catch (IOException | IllegalArgumentException e) {
+            mostrarError(e);
+        }
+    }
 
-        for (int i = 0; i < clusterManager.getComputadores().getTamano(); i++) {
-            Computador c = clusterManager.getComputadores().obtener(i);
-            PanelComputadorView pView = new PanelComputadorView(c);
-            panelesComputadores.agregarAlFinal(pView);
-            pnlComputadores.add(pView);
+    void aplicarArchivoJSON(Path ruta, boolean paraDisco) throws IOException {
+        if (paraDisco) {
+            archivoDisco = CargadorJSON.leerSistemaArchivos(ruta);
+            nombreDisco = ruta.getFileName().toString();
+        } else {
+            archivoProcesos = CargadorJSON.leerProcesos(ruta);
+            nombreProcesos = ruta.getFileName().toString();
         }
-        if (panelGrafico != null) {
-            panelGrafico.reconstruirSeries();
+        prepararSesion();
+    }
+
+    private void prepararSesion() {
+        if (archivoDisco == null || archivoProcesos == null) {
+            mostrarCargaPendiente("Carga el JSON restante para preparar la simulación.");
+            return;
         }
-        pnlComputadores.revalidate();
-        pnlComputadores.repaint();
+        SesionProyecto2 nueva;
+        try {
+            nueva = new SesionProyecto2(archivoDisco, archivoProcesos);
+        } catch (IllegalArgumentException e) {
+            mostrarCargaPendiente("Las configuraciones no se pueden combinar. Revisa el mapa y el tamaño de swap.");
+            throw e;
+        }
+
+        sesion = nueva;
+        reconstruirAlIniciar = false;
+        computador = new PanelComputadorView(sesion.getComputador());
+        graficoCPU = new PanelGraficoMetricas(sesion.getCluster());
+        disco = new PanelDisco(sesion.getSistemaArchivos().disco(), sesion.getPlanificador());
+        log.setText("");
+        ultimoLog = -1;
+
+        JPanel vistaCPU = new JPanel(new BorderLayout());
+        vistaCPU.add(computador, BorderLayout.CENTER);
+        vistaCPU.add(graficoCPU, BorderLayout.SOUTH);
+        vistas.removeAll();
+        vistas.addTab("Disco local", disco);
+        vistas.addTab("Computador", vistaCPU);
+        vistas.addTab("Eventos", new JScrollPane(log));
+        actualizarControles();
+        refrescarGUI();
+    }
+
+    private void mostrarCargaPendiente(String texto) {
+        sesion = null;
+        vistas.removeAll();
+        vistas.addTab("Configuración", new JLabel(texto, SwingConstants.CENTER));
+        actualizarControles();
+    }
+
+    private void iniciarSesion() {
+        if (sesion == null) {
+            return;
+        }
+        try {
+            if (reconstruirAlIniciar) {
+                prepararSesion();
+            }
+            sesion.getCluster().iniciarSimulacion();
+            actualizarControles();
+        } catch (IllegalArgumentException e) {
+            mostrarError(e);
+        }
+    }
+
+    private void detenerSesion() {
+        sesion.getCluster().detenerSimulacion();
+        archivoDisco = CargadorJSON.capturarSistema(sesion.getSistemaArchivos());
+        reconstruirAlIniciar = true;
+        actualizarControles();
+    }
+
+    private void guardarJSON() {
+        JFileChooser selector = selectorJSON();
+        if (selector.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            Path ruta = selector.getSelectedFile().toPath();
+            if (java.nio.file.Files.exists(ruta) && JOptionPane.showConfirmDialog(this,
+                    "¿Reemplazar " + ruta.getFileName() + "?", "Guardar disco",
+                    JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+                return;
+            }
+            try {
+                CargadorJSON.guardarSistemaArchivos(ruta, sesion.getSistemaArchivos());
+            } catch (IOException | IllegalArgumentException e) {
+                mostrarError(e);
+            }
+        }
+    }
+
+    private JFileChooser selectorJSON() {
+        JFileChooser selector = new JFileChooser();
+        selector.setFileFilter(new FileNameExtensionFilter("Archivos JSON", "json"));
+        return selector;
+    }
+
+    private void actualizarControles() {
+        boolean enMarcha = sesion != null && sesion.getCluster().getRelojGlobal().isEnEjecucion();
+        boolean enPausa = enMarcha && sesion.getCluster().getRelojGlobal().isPausado();
+        iniciar.setEnabled(sesion != null && (!enMarcha || enPausa));
+        pausar.setEnabled(enMarcha && !enPausa);
+        detener.setEnabled(enMarcha);
+        cargarDisco.setEnabled(!enMarcha);
+        cargarProcesos.setEnabled(!enMarcha);
+        guardarDisco.setEnabled(sesion != null);
+        actualizarEstado();
+    }
+
+    private void actualizarEstado() {
+        String texto = "Disco " + nombreDisco + " · Procesos " + nombreProcesos;
+        if (sesion != null) {
+            texto += " · Ciclo " + sesion.getPlanificador().obtenerMetricas().ciclo();
+            int pendientes = sesion.obtenerProcesosIO().length;
+            if (pendientes > 0) {
+                texto += " · " + pendientes + " procesos de E/S importados, pendientes de conexión al PCB";
+            }
+        }
+        estado.setText(texto);
     }
 
     private void refrescarGUI() {
-        lblCicloReloj.setText("  Ciclo Reloj Global: " + clusterManager.getRelojGlobal().getCicloActual() + "  ");
-
-        panelesComputadores.paraCadaElemento(PanelComputadorView::actualizarRefrescoGUI);
-
-        pnlBuffers.removeAll();
-        for (int i = 0; i < clusterManager.getBuffers().getTamano(); i++) {
-            Buffer b = clusterManager.getBuffers().obtener(i);
-            JPanel pBuf = new JPanel(new GridLayout(4, 1));
-            pBuf.setBorder(BorderFactory.createTitledBorder("Buffer [" + b.getIdBuffer() + "] (Anfitrión: Comp " + b.getIdComputadorAnfitrion() + ")"));
-            pBuf.add(new JLabel("Ocupación: " + b.getElementosActuales() + " / " + b.getCapacidad()));
-            pBuf.add(new JLabel("Semáforo MUTEX: " + b.getMutex().getValor() + " (Bloq: " + b.getMutex().obtenerCopiaColaBloqueados().getTamano() + ")"));
-            pBuf.add(new JLabel("Semáforo LLENO: " + b.getLleno().getValor() + " (Bloq: " + b.getLleno().obtenerCopiaColaBloqueados().getTamano() + ")"));
-            pBuf.add(new JLabel("Semáforo VACIO: " + b.getVacio().getValor() + " (Bloq: " + b.getVacio().obtenerCopiaColaBloqueados().getTamano() + ")"));
-            pnlBuffers.add(pBuf);
+        if (sesion == null) {
+            return;
         }
-        pnlBuffers.revalidate();
-        pnlBuffers.repaint();
-
-        if (panelGrafico != null) {
-            panelGrafico.actualizarGrafico();
+        actualizarEstado();
+        computador.actualizarRefrescoGUI();
+        if (!reconstruirAlIniciar) {
+            graficoCPU.actualizarGrafico();
         }
-
-        avilaos.estructuras.ListaEnlazada<String> nuevosLogs = clusterManager.obtenerNuevosLogs(ultimoIndiceLogLeido);
-        if (!nuevosLogs.estaVacia()) {
-            for (int i = 0; i < nuevosLogs.getTamano(); i++) {
-                txtLogGlobal.append(nuevosLogs.obtener(i) + "\n");
-            }
-            ultimoIndiceLogLeido += nuevosLogs.getTamano();
-            txtLogGlobal.setCaretPosition(txtLogGlobal.getDocument().getLength());
+        disco.actualizar();
+        ClusterManager cluster = sesion.getCluster();
+        int cantidad = cluster.getContadorTotalLogsGenerados();
+        if (cantidad != ultimoLog) {
+            StringBuilder texto = new StringBuilder();
+            cluster.obtenerUltimosLogs(300).paraCadaElemento(linea -> texto.append(linea).append('\n'));
+            log.setText(texto.toString());
+            log.setCaretPosition(log.getDocument().getLength());
+            ultimoLog = cantidad;
         }
     }
 
-    private void mostrarDialogoCrearComputador() {
-        JTextField txtNombre = new JTextField("Comp-" + (clusterManager.getComputadores().getTamano() + 1));
-        JTextField txtRam = new JTextField("1024");
-        JComboBox<PoliticaPlanificacion> cbPol = new JComboBox<>(PoliticaPlanificacion.values());
-        JTextField txtQuantum = new JTextField("3");
-
-        Object[] fields = {"Nombre:", txtNombre, "RAM (MB):", txtRam, "Política Inicial:", cbPol, "Quantum:", txtQuantum};
-        if (JOptionPane.showConfirmDialog(this, fields, "Crear Nuevo Computador", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
-            try {
-                clusterManager.crearComputador(txtNombre.getText(), Integer.parseInt(txtRam.getText()),
-                        (PoliticaPlanificacion) cbPol.getSelectedItem(), Integer.parseInt(txtQuantum.getText()));
-                reconstruirPanelesComputadores();
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "Entrada inválida: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-            }
-        }
+    private void mostrarError(Exception e) {
+        JOptionPane.showMessageDialog(this, e.getMessage(), "Configuración inválida", JOptionPane.ERROR_MESSAGE);
     }
-
-    private void mostrarDialogoCrearBuffer() {
-        JTextField txtId = new JTextField("B" + (clusterManager.getBuffers().getTamano() + 1));
-        JTextField txtCapacidad = new JTextField("5");
-        JTextField txtAnfitrion = new JTextField("1");
-
-        Object[] fields = {"ID Buffer:", txtId, "Capacidad:", txtCapacidad, "ID Computador Anfitrión:", txtAnfitrion};
-        if (JOptionPane.showConfirmDialog(this, fields, "Crear Nuevo Buffer Compartido", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
-            try {
-                clusterManager.crearBuffer(txtId.getText(), Integer.parseInt(txtCapacidad.getText()), Integer.parseInt(txtAnfitrion.getText()));
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "Entrada inválida: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-            }
-        }
-    }
-
-    private void mostrarDialogoCrearProceso() {
-        JTextField txtNombre = new JTextField("P1");
-        JComboBox<TipoProceso> cbTipo = new JComboBox<>(TipoProceso.values());
-        JTextField txtPrio = new JTextField("1");
-        JTextField txtRam = new JTextField("128");
-        JTextField txtDeadline = new JTextField("50");
-        JTextField txtCompDestino = new JTextField("0");
-
-        JTextField txtIdBuffer = new JTextField("B1");
-        JTextField txtFrecuencia = new JTextField("3");
-        JTextField txtElementos = new JTextField("10");
-
-        JTextField txtInstrucciones = new JTextField("20");
-
-        Object[] fields = {
-            "Nombre Proceso:", txtNombre,
-            "Tipo:", cbTipo,
-            "Prioridad:", txtPrio,
-            "RAM Requerida (MB):", txtRam,
-            "Deadline (Ciclos):", txtDeadline,
-            "Comp. Destino (0 = Automático):", txtCompDestino,
-            "--- Para CPU_BOUND / IO_BOUND ---",
-            "Instrucciones Totales:", txtInstrucciones,
-            "--- Para PRODUCTOR / CONSUMIDOR ---",
-            "ID Buffer Target:", txtIdBuffer,
-            "Frecuencia (Ciclos/elem):", txtFrecuencia,
-            "Elementos Requeridos:", txtElementos
-        };
-
-        if (JOptionPane.showConfirmDialog(this, fields, "Crear Nuevo Proceso (Vista 1)", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
-            try {
-                TipoProceso tipo = (TipoProceso) cbTipo.getSelectedItem();
-                int prio = Integer.parseInt(txtPrio.getText());
-                int ram = Integer.parseInt(txtRam.getText());
-                int deadline = Integer.parseInt(txtDeadline.getText());
-                int dest = Integer.parseInt(txtCompDestino.getText());
-
-                Proceso nuevo;
-                if (tipo == TipoProceso.PRODUCTOR || tipo == TipoProceso.CONSUMIDOR) {
-                    nuevo = new Proceso(txtNombre.getText(), tipo, prio, ram, deadline,
-                            txtIdBuffer.getText(), Integer.parseInt(txtFrecuencia.getText()), Integer.parseInt(txtElementos.getText()));
-                } else {
-                    nuevo = new Proceso(txtNombre.getText(), tipo, prio, ram, deadline, Integer.parseInt(txtInstrucciones.getText()));
-                }
-
-                clusterManager.agregarProceso(nuevo, dest);
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "Entrada inválida: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-            }
-        }
-    }
-    
 }
