@@ -4,10 +4,14 @@
  */
 package modelo;
 import enums.EstadoProcesos;
-import enums.TipoProceso;
 import enums.MotivoBloqueo;
+import enums.OperacionIO;
 import enums.PasoBuffer;
+import enums.TipoProceso;
 import java.util.concurrent.atomic.AtomicInteger;
+import persistencia.CargadorJSON.Permiso;
+import persistencia.CargadorJSON.TipoEntrada;
+import sistema.Disco.Asignacion;
 
 /**
  *
@@ -15,7 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class Proceso {
     private static final AtomicInteger contadorIdGlobal = new AtomicInteger(1);
-    
+
     private final int id;
     private final String nombre;
     private int computadorAsignado;
@@ -33,7 +37,7 @@ public class Proceso {
     private int tiempoBloqueadoSemaforo;
     private int tiempoEsperaListos;
     private boolean memoriaAsignada;
-    
+
     private int cicloLlegada;
     private int cicloPrimerEjecucion;
     private int cicloFin;
@@ -48,7 +52,20 @@ public class Proceso {
     private int intervaloIOCiclos;
     private PasoBuffer pasoBufferActual;
 
-    public Proceso(String nombre, TipoProceso tipo, int prioridad, 
+    // --- Atributos Proyecto 2: E/S en Disco y Swapping ---
+    private OperacionIO operacionIO;
+    private String rutaObjetivoIO;
+    private TipoEntrada tipoEntradaCrear;
+    private Permiso permisoCrear;
+    private String duenoCrear;
+    private int tamanoBloquesIO;
+    private String nuevoNombreIO;
+    private boolean solicitudIOEnviada;
+    private boolean operacionIOCompletada;
+    private boolean suspendiendoEnDisco;
+    private Asignacion asignacionSwap;
+
+    public Proceso(String nombre, TipoProceso tipo, int prioridad,
                    int memoriaRequerida, int deadline, int instruccionesTotales) {
         this.id = contadorIdGlobal.getAndIncrement();
         this.nombre = nombre;
@@ -75,12 +92,13 @@ public class Proceso {
         this.ciclosEjecutadosDesdeIO = 0;
         this.intervaloIOCiclos = 5;
         this.pasoBufferActual = PasoBuffer.NINGUNO;
+        this.solicitudIOEnviada = false;
+        this.operacionIOCompletada = false;
+        this.suspendiendoEnDisco = false;
     }
-    
-    
 
-    public Proceso(String nombre, TipoProceso tipo, int prioridad, 
-                   int memoriaRequerida, int deadline, String idBuffer, 
+    public Proceso(String nombre, TipoProceso tipo, int prioridad,
+                   int memoriaRequerida, int deadline, String idBuffer,
                    int frecuenciaCiclos, int elementosRequeridos) {
         this(nombre, tipo, prioridad, memoriaRequerida, deadline, Integer.MAX_VALUE);
         this.idBuffer = idBuffer;
@@ -89,27 +107,48 @@ public class Proceso {
         this.elementosProcesados = 0;
         this.contadorCiclosBuffer = 0;
     }
-    
+
+    public void configurarOperacionIO(OperacionIO operacion, String rutaObjetivo,
+                                      TipoEntrada tipoCrear, int tamanoBloques,
+                                      Permiso permiso, String dueno, String nuevoNombre) {
+        this.operacionIO = operacion;
+        this.rutaObjetivoIO = rutaObjetivo;
+        this.tipoEntradaCrear = tipoCrear;
+        this.tamanoBloquesIO = tamanoBloques;
+        this.permisoCrear = permiso;
+        this.duenoCrear = dueno;
+        this.nuevoNombreIO = nuevoNombre;
+        this.solicitudIOEnviada = false;
+        this.operacionIOCompletada = false;
+    }
+
+    public boolean esProcesoDeArchivo() {
+        return operacionIO != null
+                && operacionIO != OperacionIO.SUSPEND
+                && operacionIO != OperacionIO.REACTIVATE;
+    }
+
     public void ejecutarCiclo() {
         if (this.tiempoRestante > 0) {
             this.tiempoRestante--;
             this.pc++;
             this.mar++;
             this.ciclosEjecutadosDesdeIO++;
-            if ((this.tipo == TipoProceso.PRODUCTOR || this.tipo == TipoProceso.CONSUMIDOR) && pasoBufferActual == PasoBuffer.NINGUNO) {
+            if ((this.tipo == TipoProceso.PRODUCTOR || this.tipo == TipoProceso.CONSUMIDOR)
+                    && pasoBufferActual == PasoBuffer.NINGUNO) {
                 this.contadorCiclosBuffer++;
             }
         }
     }
-    
+
     public boolean leTocaTocarBuffer() {
         if (tipo != TipoProceso.PRODUCTOR && tipo != TipoProceso.CONSUMIDOR) return false;
         if (elementosProcesados >= elementosRequeridos && pasoBufferActual == PasoBuffer.NINGUNO) {
-        return false;
-    }
+            return false;
+        }
         return contadorCiclosBuffer >= frecuenciaCiclos || pasoBufferActual != PasoBuffer.NINGUNO;
     }
-    
+
     public void reiniciarContadorCiclosBuffer() {
         this.contadorCiclosBuffer = 0;
         this.pasoBufferActual = PasoBuffer.NINGUNO;
@@ -120,9 +159,13 @@ public class Proceso {
             this.deadline--;
         }
     }
-    
+
     public boolean requiereIO() {
-        if (this.tipo == TipoProceso.IO_BOUND && this.tiempoRestante > 0 && this.ciclosEjecutadosDesdeIO >= intervaloIOCiclos) {
+        if (esProcesoDeArchivo()) {
+            return false;
+        }
+        if (this.tipo == TipoProceso.IO_BOUND && this.tiempoRestante > 0
+                && this.ciclosEjecutadosDesdeIO >= intervaloIOCiclos) {
             this.ciclosEjecutadosDesdeIO = 0;
             return true;
         }
@@ -132,9 +175,12 @@ public class Proceso {
     public void resetearTiempoBloqueado() {
         this.tiempoBloqueado = 0;
     }
-    
+
     public String getInstruccionActual() {
         if (tiempoRestante <= 0) return "NOP (FINALIZADO)";
+        if (esProcesoDeArchivo()) {
+            return "FS_" + operacionIO.name() + "(" + rutaObjetivoIO + ")";
+        }
         if (pasoBufferActual != PasoBuffer.NINGUNO) {
             switch (pasoBufferActual) {
                 case WAIT_CONTEO -> {
@@ -152,163 +198,85 @@ public class Proceso {
                 case SIGNAL_CONTEO -> {
                     return "SEM_SIGNAL(" + (tipo == TipoProceso.PRODUCTOR ? "LLENO" : "VACIO") + ")";
                 }
-                default -> {
-                }
+                default -> { }
             }
         }
         switch (tipo) {
             case PRODUCTOR: return "PREPARAR_PRODUCCION_PC_" + pc;
             case CONSUMIDOR: return "PREPARAR_CONSUMO_PC_" + pc;
             case IO_BOUND: return "IO_REQUEST_PC_" + pc;
-            case CPU_BOUND: default: return "EXEC_INSTR_PC_" + pc;
+            case CPU_BOUND:
+            default: return "EXEC_INSTR_PC_" + pc;
         }
     }
 
     public String getFormatoPC() {
         return "PC: 0x" + String.format("%04X", pc) + " (" + getInstruccionActual() + ")";
     }
-    
+
     public boolean haExpiradoDeadline() {
         return this.deadline <= 0;
     }
 
-    public void incrementarTiempoBloqueado() {
-        this.tiempoBloqueado++;
-    }
-    public void incrementarTiempoBloqueadoSemaforo() {
-        this.tiempoBloqueadoSemaforo++;
-    }
-    public void incrementarTiempoEsperaListos() {
-        this.tiempoEsperaListos++;
-    }
-    public boolean haCumplidoLatenciaRed(int latenciaConfigurada) {
-        return ciclosLatenciaPendientes >= latenciaConfigurada;
-    }
-    public void incrementarCiclosLatenciaPendientes() {
-        this.ciclosLatenciaPendientes++;
-    }
-    public void resetearLatenciaRed() {
-        this.ciclosLatenciaPendientes = 0;
-    }
+    public void incrementarTiempoBloqueado() { this.tiempoBloqueado++; }
+    public void incrementarTiempoBloqueadoSemaforo() { this.tiempoBloqueadoSemaforo++; }
+    public void incrementarTiempoEsperaListos() { this.tiempoEsperaListos++; }
+    public boolean haCumplidoLatenciaRed(int latenciaConfigurada) { return ciclosLatenciaPendientes >= latenciaConfigurada; }
+    public void incrementarCiclosLatenciaPendientes() { this.ciclosLatenciaPendientes++; }
+    public void resetearLatenciaRed() { this.ciclosLatenciaPendientes = 0; }
 
-    public PasoBuffer getPasoBufferActual() {
-        return pasoBufferActual;
-    }
-    public void setPasoBufferActual(PasoBuffer paso) {
-        this.pasoBufferActual = paso;
-    }
+    public PasoBuffer getPasoBufferActual() { return pasoBufferActual; }
+    public void setPasoBufferActual(PasoBuffer paso) { this.pasoBufferActual = paso; }
+    public int getTiempoBloqueadoSemaforo() { return tiempoBloqueadoSemaforo; }
+    public int getIntervaloIOCiclos() { return intervaloIOCiclos; }
+    public void setIntervaloIOCiclos(int intervaloIOCiclos) { this.intervaloIOCiclos = intervaloIOCiclos; }
+    public int getId() { return id; }
+    public String getNombre() { return nombre; }
+    public int getComputadorAsignado() { return computadorAsignado; }
+    public void setComputadorAsignado(int computadorAsignado) { this.computadorAsignado = computadorAsignado; }
+    public EstadoProcesos getEstado() { return estado; }
+    public void setEstado(EstadoProcesos estado) { this.estado = estado; }
+    public MotivoBloqueo getMotivoBloqueo() { return motivoBloqueo; }
+    public void setMotivoBloqueo(MotivoBloqueo motivoBloqueo) { this.motivoBloqueo = motivoBloqueo; }
+    public TipoProceso getTipo() { return tipo; }
+    public int getPrioridad() { return prioridad; }
+    public int getMemoriaRequerida() { return memoriaRequerida; }
+    public int getDeadline() { return deadline; }
+    public void setDeadline(int deadline) { this.deadline = deadline; }
+    public int getTiempoRestante() { return tiempoRestante; }
+    public void setTiempoRestante(int tiempoRestante) { this.tiempoRestante = tiempoRestante; }
+    public int getInstruccionesTotales() { return instruccionesTotales; }
+    public int getPc() { return pc; }
+    public int getMar() { return mar; }
+    public int getTiempoBloqueado() { return tiempoBloqueado; }
+    public int getTiempoEsperaListos() { return tiempoEsperaListos; }
+    public boolean isMemoriaAsignada() { return memoriaAsignada; }
+    public void setMemoriaAsignada(boolean memoriaAsignada) { this.memoriaAsignada = memoriaAsignada; }
+    public String getIdBuffer() { return idBuffer; }
+    public int getFrecuenciaCiclos() { return frecuenciaCiclos; }
+    public int getElementosRequeridos() { return elementosRequeridos; }
+    public int getElementosProcesados() { return elementosProcesados; }
+    public void incrementarElementosProcesados() { this.elementosProcesados++; }
+    public int getCicloLlegada() { return cicloLlegada; }
+    public void setCicloLlegada(int cicloLlegada) { this.cicloLlegada = cicloLlegada; }
+    public int getCicloPrimerEjecucion() { return cicloPrimerEjecucion; }
+    public void setCicloPrimerEjecucion(int ciclo) { if (this.cicloPrimerEjecucion == -1) this.cicloPrimerEjecucion = ciclo; }
+    public int getCicloFin() { return cicloFin; }
+    public void setCicloFin(int cicloFin) { this.cicloFin = cicloFin; }
 
-    
-    
-    //getters y setters
-    
-    public int getTiempoBloqueadoSemaforo() {
-        return tiempoBloqueadoSemaforo;
-    }
-    public int getIntervaloIOCiclos() {
-        return intervaloIOCiclos;
-    }
-    public void setIntervaloIOCiclos(int intervaloIOCiclos) {
-        this.intervaloIOCiclos = intervaloIOCiclos;
-    }
-
-    public int getId() {
-        return id;
-    }
-    public String getNombre() {
-        return nombre;
-    }
-    public int getComputadorAsignado() {
-        return computadorAsignado;
-    }
-    public void setComputadorAsignado(int computadorAsignado) {
-        this.computadorAsignado = computadorAsignado;
-    }
-    public EstadoProcesos getEstado() {
-        return estado;
-    }
-    public void setEstado(EstadoProcesos estado) {
-        this.estado = estado;
-    }
-    public MotivoBloqueo getMotivoBloqueo() {
-        return motivoBloqueo;
-    }
-    public void setMotivoBloqueo(MotivoBloqueo motivoBloqueo) {
-        this.motivoBloqueo = motivoBloqueo;
-    }
-    public TipoProceso getTipo() {
-        return tipo;
-    }
-    public int getPrioridad() {
-        return prioridad;
-    }
-    public int getMemoriaRequerida() {
-        return memoriaRequerida;
-    }
-    public int getDeadline() {
-        return deadline;
-    }
-    public void setDeadline(int deadline) {
-        this.deadline = deadline;
-    }
-    public int getTiempoRestante() {
-        return tiempoRestante;
-    }
-    public void setTiempoRestante(int tiempoRestante) {
-        this.tiempoRestante = tiempoRestante;
-    }
-    public int getInstruccionesTotales() {
-        return instruccionesTotales;
-    }
-    public int getPc() {
-        return pc;
-    }
-    public int getMar() {
-        return mar;
-    }
-    public int getTiempoBloqueado() {
-        return tiempoBloqueado;
-    }
-    public int getTiempoEsperaListos() {
-        return tiempoEsperaListos;
-    }
-    public boolean isMemoriaAsignada() {
-        return memoriaAsignada;
-    }
-    public void setMemoriaAsignada(boolean memoriaAsignada) {
-        this.memoriaAsignada = memoriaAsignada;
-    }
-    public String getIdBuffer() {
-        return idBuffer;
-    }
-    public int getFrecuenciaCiclos() {
-        return frecuenciaCiclos;
-    }
-    public int getElementosRequeridos() {
-        return elementosRequeridos;
-    }
-    public int getElementosProcesados() {
-        return elementosProcesados;
-    }
-    public void incrementarElementosProcesados() {
-        this.elementosProcesados++;
-    }
-    public int getCicloLlegada() {
-        return cicloLlegada;
-    }
-    public void setCicloLlegada(int cicloLlegada) {
-        this.cicloLlegada = cicloLlegada;
-    }
-    public int getCicloPrimerEjecucion() {
-        return cicloPrimerEjecucion;
-    }
-    public void setCicloPrimerEjecucion(int ciclo) {
-        if (this.cicloPrimerEjecucion == -1) this.cicloPrimerEjecucion = ciclo;
-    }
-    public int getCicloFin() {
-        return cicloFin;
-    }
-    public void setCicloFin(int cicloFin) {
-        this.cicloFin = cicloFin;
-    }
+    public OperacionIO getOperacionIO() { return operacionIO; }
+    public String getRutaObjetivoIO() { return rutaObjetivoIO; }
+    public TipoEntrada getTipoEntradaCrear() { return tipoEntradaCrear; }
+    public Permiso getPermisoCrear() { return permisoCrear; }
+    public String getDuenoCrear() { return duenoCrear; }
+    public int getTamanoBloquesIO() { return tamanoBloquesIO; }
+    public String getNuevoNombreIO() { return nuevoNombreIO; }
+    public boolean isSolicitudIOEnviada() { return solicitudIOEnviada; }
+    public void setSolicitudIOEnviada(boolean enviada) { this.solicitudIOEnviada = enviada; }
+    public boolean isOperacionIOCompletada() { return operacionIOCompletada; }
+    public void setOperacionIOCompletada(boolean completada) { this.operacionIOCompletada = completada; }
+    public boolean isSuspendiendoEnDisco() { return suspendiendoEnDisco; }
+    public void setSuspendiendoEnDisco(boolean suspendiendoEnDisco) { this.suspendiendoEnDisco = suspendiendoEnDisco; }
+    public Asignacion getAsignacionSwap() { return asignacionSwap; }
+    public void setAsignacionSwap(Asignacion asignacionSwap) { this.asignacionSwap = asignacionSwap; }
 }

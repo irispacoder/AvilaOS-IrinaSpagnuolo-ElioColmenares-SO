@@ -35,13 +35,14 @@ public class VentanaPrincipal extends JFrame {
     private PanelComputadorView computador;
     private PanelGraficoMetricas graficoCPU;
     private PanelDisco disco;
+    private PanelSistemaArchivos panelFS;
     private int ultimoLog;
 
     public VentanaPrincipal() {
         super("ÁvilaOS · Proyecto 2");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setMinimumSize(new Dimension(820, 580));
-        setSize(1150, 760);
+        setSize(1180, 780);
         setLocationRelativeTo(null);
 
         JToolBar acciones = new JToolBar();
@@ -124,6 +125,7 @@ public class VentanaPrincipal extends JFrame {
         computador = new PanelComputadorView(sesion.getComputador());
         graficoCPU = new PanelGraficoMetricas(sesion.getCluster());
         disco = new PanelDisco(sesion.getSistemaArchivos().disco(), sesion.getPlanificador());
+        panelFS = new PanelSistemaArchivos(sesion);
         log.setText("");
         ultimoLog = -1;
 
@@ -131,6 +133,7 @@ public class VentanaPrincipal extends JFrame {
         vistaCPU.add(computador, BorderLayout.CENTER);
         vistaCPU.add(graficoCPU, BorderLayout.SOUTH);
         vistas.removeAll();
+        vistas.addTab("Sistema de Archivos", panelFS);
         vistas.addTab("Disco local", disco);
         vistas.addTab("Computador", vistaCPU);
         vistas.addTab("Eventos", new JScrollPane(log));
@@ -153,6 +156,7 @@ public class VentanaPrincipal extends JFrame {
             if (reconstruirAlIniciar) {
                 prepararSesion();
             }
+            sesion.despacharProcesosIOIniciales();
             sesion.getCluster().iniciarSimulacion();
             actualizarControles();
         } catch (IllegalArgumentException e) {
@@ -162,7 +166,7 @@ public class VentanaPrincipal extends JFrame {
 
     private void detenerSesion() {
         sesion.getCluster().detenerSimulacion();
-        archivoDisco = CargadorJSON.capturarSistema(sesion.getSistemaArchivos());
+        archivoDisco = CargadorJSON.capturarSistema(sesion.getGestorArchivos().exportarSistemaCargado());
         reconstruirAlIniciar = true;
         actualizarControles();
     }
@@ -177,7 +181,7 @@ public class VentanaPrincipal extends JFrame {
                 return;
             }
             try {
-                CargadorJSON.guardarSistemaArchivos(ruta, sesion.getSistemaArchivos());
+                CargadorJSON.guardarSistemaArchivos(ruta, sesion.getGestorArchivos().exportarSistemaCargado());
             } catch (IOException | IllegalArgumentException e) {
                 mostrarError(e);
             }
@@ -205,11 +209,8 @@ public class VentanaPrincipal extends JFrame {
     private void actualizarEstado() {
         String texto = "Disco " + nombreDisco + " · Procesos " + nombreProcesos;
         if (sesion != null) {
-            texto += " · Ciclo " + sesion.getPlanificador().obtenerMetricas().ciclo();
-            int pendientes = sesion.obtenerProcesosIO().length;
-            if (pendientes > 0) {
-                texto += " · " + pendientes + " procesos de E/S importados, pendientes de conexión al PCB";
-            }
+            texto += " · Ciclo " + sesion.getPlanificador().obtenerMetricas().ciclo()
+                    + " · Modo: " + sesion.getGestorArchivos().getModoUsuarioActual();
         }
         estado.setText(texto);
     }
@@ -219,6 +220,7 @@ public class VentanaPrincipal extends JFrame {
             return;
         }
         actualizarEstado();
+        panelFS.refrescar();
         computador.actualizarRefrescoGUI();
         if (!reconstruirAlIniciar) {
             graficoCPU.actualizarGrafico();
