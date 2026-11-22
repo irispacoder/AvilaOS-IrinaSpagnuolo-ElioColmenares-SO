@@ -17,7 +17,6 @@ import persistencia.CargadorJSON.Permiso;
 import persistencia.CargadorJSON.SistemaCargado;
 import persistencia.CargadorJSON.TipoEntrada;
 
-/** Construye el computador y su disco local a partir de las dos configuraciones. */
 public final class SesionProyecto2 {
     private record VinculoIO(long idSolicitud, Proceso proceso) {}
 
@@ -63,9 +62,14 @@ public final class SesionProyecto2 {
         }
     }
 
+    /**
+     * Despacha los procesos de E/S del JSON de forma concurrente antes del primer tic del disco,
+     * permitiendo evaluar las políticas (FIFO, SSTF, SCAN, C-SCAN) con toda la cola en t=0.
+     */
     public synchronized void despacharProcesosIOIniciales() {
         if (procesosIODespachados) return;
         procesosIODespachados = true;
+        int cicloActual = cluster.getRelojGlobal().getCicloActual();
         for (ConfigProceso config : procesosIO) {
             Proceso pIO = new Proceso(config.nombre(), TipoProceso.IO_BOUND, config.prioridad(),
                     config.memoria(), config.deadline(), config.instrucciones());
@@ -73,6 +77,19 @@ public final class SesionProyecto2 {
             pIO.configurarOperacionIO(config.operacion(), config.ruta(), tipoCrear,
                     config.tamanoArchivo(), Permiso.PUBLIC, "admin", null);
             cluster.agregarProceso(pIO, computador.getIdComputador());
+
+            // Si fue admitido a RAM (LISTO), ejecuta su llamada al sistema de inmediato y encola su E/S
+            if (pIO.getEstado() == EstadoProcesos.LISTO) {
+                computador.getColaListos().eliminar(pIO);
+                pIO.setCicloPrimerEjecucion(cicloActual);
+                pIO.ejecutarCiclo();
+                pIO.setSolicitudIOEnviada(true);
+                pIO.setEstado(EstadoProcesos.BLOQUEADO);
+                pIO.setMotivoBloqueo(MotivoBloqueo.OPERACION_IO);
+                pIO.resetearTiempoBloqueado();
+                computador.getColaBloqueados().agregarAlFinal(pIO);
+                enviarSolicitudArchivoAlDisco(pIO);
+            }
         }
     }
 
