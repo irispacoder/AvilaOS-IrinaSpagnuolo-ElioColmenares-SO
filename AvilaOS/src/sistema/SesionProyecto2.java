@@ -127,6 +127,11 @@ public final class SesionProyecto2 {
     private void procesarFinSolicitudDisco(SolicitudIO solicitud) {
         Proceso p = extraerProcesoVinculado(solicitud.id());
         if (p == null) return;
+        if (p.getEstado() == EstadoProcesos.TERMINADO) {
+            cluster.registrarLog("Se descarta la finalización de E/S de " + p.getNombre()
+                    + " porque el proceso ya terminó.");
+            return;
+        }
 
         if (solicitud.operacion() == OperacionIO.SUSPEND) {
             p.setSuspendiendoEnDisco(false);
