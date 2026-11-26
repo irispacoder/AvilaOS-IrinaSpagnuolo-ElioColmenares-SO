@@ -15,6 +15,8 @@ El ejemplo importa ocho descriptores de E/S. Su creación como PCB, el sistema d
 
 ## Pruebas de la Persona 1
 
+[Casos oficiales P1–P4 y casos borde con JSON e instrucciones](AvilaOS/ejemplos/casos-prueba/README.md)
+
 Desde la raíz del repositorio, con JDK 25, en macOS o Linux:
 
 ```sh
