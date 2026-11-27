@@ -13,5 +13,6 @@ public enum MotivoBloqueo {
     ESPERA_SEMAFORO,
     LATENCIA_RED,
     OPERACION_IO,
-    ESPERA_MEMORIA
+    ESPERA_MEMORIA,
+    SWAPPING
 }

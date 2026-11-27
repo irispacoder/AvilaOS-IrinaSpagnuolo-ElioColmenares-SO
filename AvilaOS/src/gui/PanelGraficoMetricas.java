@@ -65,7 +65,7 @@ public class PanelGraficoMetricas extends JPanel{
 
         for (int i = 0; i < clusterManager.getComputadores().getTamano(); i++) {
             Computador comp = clusterManager.getComputadores().obtener(i);
-            XYSeries serie = new XYSeries("Comp " + comp.getIdComputador() + ": " + comp.getNombre());
+            XYSeries serie = new XYSeries("Comp " + comp.getIdComputador() + ": " + comp.getNombre(), true, false);
             serie.setMaximumItemCount(100);
             dataset.addSeries(serie);
             seriesPorComputador.agregarAlFinal(serie);
